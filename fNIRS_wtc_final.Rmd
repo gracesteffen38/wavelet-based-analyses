@@ -1,0 +1,226 @@
+---
+title: "wtc for molly"
+author: "Grace Steffen"
+date: "2024-10-13"
+output: pdf_document
+---
+
+```{r}
+library(biwavelet)
+library(tidyverse)
+library(WaveletComp)
+library(dplyr)
+```
+
+loading the aggregated files: left and right normalized and processed and combining mother (subject 1) and child (subject 2) HbO, HbR, and HbT for each and combining child and mother into one dataframe for each for ease of access in loops
+```{r}
+setwd("C:/Users/gs94051/Documents/Research/FIP/Molly fNIRS synchrony/Grace_WTC/")
+processed_left <- read.csv("Subject_1_Processed_Left_agg.csv")
+colnames(processed_left)[colnames(processed_left) == 'HbO'] <- 'mom_HbO'
+colnames(processed_left)[colnames(processed_left) == 'HbR'] <- 'mom_HbR'
+colnames(processed_left)[colnames(processed_left) == 'HbT'] <- 'mom_HbT'
+#changing names to specify whose data it is before combining with child data below; repeat this below for the other three dataframes
+
+child_processed_left <- read.csv("Subject_2_Processed_Left_agg.csv")
+processed_left$child_HbO = child_processed_left$HbO
+processed_left$child_HbT = child_processed_left$HbT
+processed_left$child_HbR = child_processed_left$HbR
+
+processed_right <- read.csv("Subject_1_Processed_Right_agg.csv")
+colnames(processed_right)[colnames(processed_right) == 'HbO'] <- 'mom_HbO'
+colnames(processed_right)[colnames(processed_right) == 'HbR'] <- 'mom_HbR'
+colnames(processed_right)[colnames(processed_right) == 'HbT'] <- 'mom_HbT'
+
+child_processed_right <- read.csv("Subject_2_Processed_Right_agg.csv")
+processed_right$child_HbO = child_processed_right$HbO
+processed_right$child_HbT = child_processed_right$HbT
+processed_right$child_HbR = child_processed_right$HbR
+
+norm_left <- read.csv("Subject_1_Normalized_Left_agg.csv")
+colnames(norm_left)[colnames(norm_left) == 'HbO'] <- 'mom_HbO'
+colnames(norm_left)[colnames(norm_left) == 'HbR'] <- 'mom_HbR'
+colnames(norm_left)[colnames(norm_left) == 'HbT'] <- 'mom_HbT'
+
+child_norm_left <- read.csv("Subject_2_Normalized_Left_agg.csv")
+norm_left$child_HbO = child_norm_left$HbO
+norm_left$child_HbT = child_norm_left$HbT
+norm_left$child_HbR = child_norm_left$HbR
+
+norm_right <- read.csv("Subject_1_Normalized_Right_agg.csv")
+colnames(norm_right)[colnames(norm_right) == 'HbO'] <- 'mom_HbO'
+colnames(norm_right)[colnames(norm_right) == 'HbR'] <- 'mom_HbR'
+colnames(norm_right)[colnames(norm_right) == 'HbT'] <- 'mom_HbT'
+
+child_norm_right <- read.csv("Subject_2_Normalized_Right_agg.csv")
+norm_right$child_HbO = child_norm_right$HbO
+norm_right$child_HbT = child_norm_right$HbT
+norm_right$child_HbR = child_norm_right$HbR
+```
+computing an example wtc to find which rows reflect our frequency band of interest 0.01 to 0.1; freq = 1/period, so freq of 0.01 and 0.1 = 100 and 10 correspond to 28 to 67
+FOI chosen from https://pmc.ncbi.nlm.nih.gov/articles/PMC10511757/ 
+```{r}
+child_processed_left_o_102 = child_processed_left_o[1:293,]
+mom_processed_left_o_102 = mom_processed_left_o[1:293,]
+
+wtc_101 <- wtc(child_processed_left_o_101, mom_processed_left_o_101, nrand=10)
+which(round(wtc_101$period)==10) #checking what exact period this reflects below
+wtc_101$period[28] #10.0639; we will use this as our lower period cut off
+which(round(wtc_101$period, -1)==100) #output is 67 and 68; likely that 67 is below 100 and 68 is above, checking below to verify that
+wtc_101$period[67] #95.74445; we will use this number so as not to extract coherence outside of our frequency band of interest
+wtc_101$period[68] #101.4377 
+```
+
+creating a function to iterate through each of the three types of hemoglobin for each dyads by their subject number, compute the wtc, then save the mean coherence across our frequency band of interest (see above) for each hb measure for each data type (left and right processed and normalized) 
+
+```{r}
+compile_wavelets <- function(df){
+  Hbs = c("HbO", "HbR", "HbT")
+  #loop through all three types of hemogoblin concentrations
+  for (which_hb in Hbs){
+  IDs <- unique(df$SubjectNumber)
+  coherence_means <- data.frame(SubjectNumber = as.character(),coherence = numeric(),
+                       stringsAsFactors = FALSE)
+  for (i in IDs){
+    dat_mom_o <- df[df$SubjectNumber == i, c("dc_time", paste0("mom_", which_hb))]
+    dat_child_o <- df[df$SubjectNumber == i, c("dc_time", paste0("child_", which_hb))]
+    wtc.i <- wtc(dat_mom_o, dat_child_o, nrand=10)
+    #creating functions to pull out the cone of influence (coi) 
+    func <- function(x) { rep(x, length(wtc.i$period)) } 
+    Inv.coi <- sapply(1/wtc.i$coi, func)
+    func <- function(x) { rep(x, length(wtc.i$coi)) } 
+    Period <- sapply(wtc.i$period, func)
+    Period <- t(Period)
+    
+    Incoi = Inv.coi * Period
+    Incoi[Incoi > 1] <- 0 # 0 for the COI area
+    Incoi[Incoi > 0] <- 1 # 1 for out of COI area where we analyze
+    
+    # multiplying the Rsq matrix and COI matrix
+    Rsq <- wtc.i$rsq * Incoi
+    Rsq[Rsq == 0] <- NA # make the COI area as "NA"
+    coherence <- mean(Rsq[28:67,1:293], na.rm = T)
+    #mean coherence, removing NAs for data that is within the cone of influence
+    coherence_means <- rbind(coherence_means, data.frame(SubjectNumber = as.numeric(i), coherence=coherence))
+    #creating a dataframe of the coherence means
+  }
+  names(coherence_means)[names(coherence_means) == 'coherence'] <- paste0(deparse(substitute(df)), "_coherence_", which_hb)
+  outputname = paste0(deparse(substitute(df)),"_coherence_", which_hb)
+  #renaming the columns and the dataframes to reflect which data we're working with (left or right, processed or normalized, hbo, hbr, or hbt)
+  assign(outputname, coherence_means, envir = .GlobalEnv)
+  #telling the function to output the above dataframe
+}
+}
+```
+
+
+Now, use the function to get mean coherence for each fNIRS output: processed_right, processed_left, norm_right, norm_left for all three Hbs and then joining to a single dataframe for each
+  There's probably a more concise way to do so...
+```{r}
+compile_wavelets(processed_right)
+compile_wavelets(processed_left)
+compile_wavelets(norm_right)
+#compile_wavelets(norm_left)
+#running this produced an error which occured at subjectnumber 147, so I am removing it below:
+norm_left <- norm_left%>%
+  filter(SubjectNumber != "147")
+compile_wavelets(norm_left)
+
+list_df = list(processed_right_coherence_HbO,processed_right_coherence_HbR,processed_right_coherence_HbT, processed_left_coherence_HbO,processed_left_coherence_HbR,processed_left_coherence_HbT,norm_right_coherence_HbO,norm_right_coherence_HbR,norm_right_coherence_HbT, norm_left_coherence_HbO,norm_left_coherence_HbR,norm_left_coherence_HbT)
+all_coherence <- list_df %>% reduce(full_join, by='SubjectNumber')
+```
+writing coherence to a csv file
+```{r}
+setwd("C:/Users/gs94051/Documents/Research/FIP/Molly fNIRS synchrony/")
+write.csv(all_coherence, "Coherence_for_MH.csv")
+```
+
+
+repear above steps, but with random pairs
+```{r}
+compile_rand_wavelets <- function(df){
+  Hbs = c("HbO", "HbR", "HbT")
+  #loop through all three types of hemogoblin concentrations
+  for (which_hb in Hbs){
+  IDs <- unique(df$SubjectNumber)[-10]
+  #removing subject 116 due to length discrepancy (only 117 seconds long while the others are 293 seconds long... possible that this is baseline data as baseline is 117 seconds)
+  coherence_means <- data.frame(SubjectNumber = as.character(),coherence = numeric(),
+                       stringsAsFactors = FALSE)
+  for (i in IDs){
+    j= sample(IDs[IDs != i], 1)
+    dat_mom_o <- df[df$SubjectNumber == i, c("dc_time", paste0("mom_", which_hb))]
+    dat_child_o <- df[df$SubjectNumber == j, c("dc_time", paste0("child_", which_hb))]
+    #because the time series across dyads does not have the same step size, we will create a new time variable. our sampling rate was 5hz so we can just make this 1:nrow()... might be an easier way around this
+    dat_mom_o$dc_time = 1:nrow(dat_mom_o)
+    dat_child_o$dc_time = 1:nrow(dat_child_o)
+    
+    wtc.i <- wtc(dat_mom_o[1:293,], dat_child_o[1:293,], nrand=10)
+    #creating functions to pull out the cone of influence (coi) 
+    func <- function(x) { rep(x, length(wtc.i$period)) } 
+    Inv.coi <- sapply(1/wtc.i$coi, func)
+    func <- function(x) { rep(x, length(wtc.i$coi)) } 
+    Period <- sapply(wtc.i$period, func)
+    Period <- t(Period)
+    
+    Incoi = Inv.coi * Period
+    Incoi[Incoi > 1] <- 0 # 0 for the COI area
+    Incoi[Incoi > 0] <- 1 # 1 for out of COI area where we analyze
+    
+    # multiplying the Rsq matrix and COI matrix
+    Rsq <- wtc.i$rsq * Incoi
+    Rsq[Rsq == 0] <- NA # make the COI area as "NA"
+    coherence <- mean(Rsq[28:67,1:293], na.rm = T)
+    #mean coherence, removing NAs for data that is within the cone of influence
+    coherence_means <- rbind(coherence_means, data.frame(SubjectNumber_Mom = as.numeric(i), SubjectNumber_Child = as.numeric(j), coherence=coherence))
+    #creating a dataframe of the coherence means
+  }
+  names(coherence_means)[names(coherence_means) == 'coherence'] <- paste0(deparse(substitute(df)), "_coherence_", which_hb)
+  outputname = paste0(deparse(substitute(df)),"_rpa_coherence_", which_hb)
+  #renaming the columns and the dataframes to reflect which data we're working with (left or right, processed or normalized, hbo, hbr, or hbt)
+  assign(outputname, coherence_means, envir = .GlobalEnv)
+  #telling the function to output the above dataframe
+}
+}
+```
+
+```{r}
+compile_rand_wavelets(processed_right)
+compile_rand_wavelets(processed_left)
+compile_rand_wavelets(norm_right)
+#compile_wavelets(norm_left)
+#running this produced an error which occured at subjectnumber 147, so I am removing it below:
+norm_left <- norm_left%>%
+  filter(SubjectNumber != "147")
+compile_rand_wavelets(norm_left)
+
+list_df = list(processed_right_rpa_coherence_HbO,processed_right_rpa_coherence_HbR,processed_right_rpa_coherence_HbT, processed_left_rpa_coherence_HbO,processed_left_rpa_coherence_HbR,processed_left_rpa_coherence_HbT,norm_right_rpa_coherence_HbO,norm_right_rpa_coherence_HbR,norm_right_rpa_coherence_HbT, norm_left_rpa_coherence_HbO,norm_left_rpa_coherence_HbR,norm_left_rpa_coherence_HbT)
+all_rand_coherence <- list_df %>% reduce(full_join, by='SubjectNumber_Mom')
+```
+```{r}
+all_coherence <- read.csv("Coherence_for_MH.csv")
+all_rand_coherence1 <- read.csv("RPA_Coherence_for_MH.csv")
+```
+
+```{r}
+ttest = t.test(all_coherence$processed_right_coherence_HbO, all_rand_coherence$processed_right_coherence_HbO)
+```
+
+
+make df with t test stat and p value columns, rows for the 12 regions/processednormed
+```{r}
+rpa_ttest_results1 <- data.frame(
+  column_name = character(), 
+  t_value = numeric(), 
+  p_value = numeric(), 
+  stringsAsFactors = FALSE
+)
+for (col in colnames(all_coherence)[-1]){
+  t_test_result <- t.test(all_coherence[[col]], all_rand_coherence1[[col]])
+  rpa_ttest_results1 <- rbind(rpa_ttest_results, data.frame(
+    column_name = col, 
+    t_value = t_test_result$statistic, 
+    p_value = t_test_result$p.value
+  ))
+}
+```
+
+
