@@ -1,0 +1,448 @@
+---
+title: "special issue"
+output: html_document
+date: "2025-06-13"
+---
+
+```{r}
+library(dplyr)
+library(biwavelet)
+library(tidyverse)
+library(purrr)
+#library(WaveletCRmp)
+```
+
+```{r}
+setwd("C:/")
+si_data <- read.csv("Network_Data2.csv")
+si_data_long = dplyr::select(si_data,contains("IBI")|contains("dc_time")|contains("SubjectNumber")|contains("stim_time")|contains("RSA"))
+si_data_base = si_data_long%>%filter(stim_time ==2)%>%select(!contains("Lego")&!contains("stim_time"))
+
+si_data_base =si_data_base[!duplicated(si_data_base), ]
+
+base_agg_dlpfc <- read.csv("base_processed_dlpfc.csv")
+base_agg_tpj <- read.csv("base_processed_tpj.csv")
+
+
+base_agg_nirs = merge(base_agg_dlpfc, base_agg_tpj, by = c("dc_time", "SubjectNumber"))
+
+base_all = merge(si_data_base, base_agg_nirs, by = c("dc_time", "SubjectNumber"))
+stress_all <- read.csv("stress_all.csv")
+
+stress_all<- stress_all%>%filter(SubjectNumber != 116)
+base_all<- base_all%>%filter(SubjectNumber != 116)
+```
+
+
+exploring other lags
+```{r}
+compile_wavelets_lag <- function(df, who = "mom", phys = "IBI", lag=6){
+  Hbs = c("HbR_tpj_l", "HbR_tpj_r","HbR_dlpfc_l", "HbR_dlpfc_r")
+  wavelet_list = list()
+  timescales = c("4", "8", "16", "32", "64", "all")
+  #loop through all three types of hemogoblin concentrations
+  for (which_hb in Hbs){
+  IDs <- unique(df$SubjectNumber)
+  coherence_means <- data.frame(SubjectNumber = as.character(),coherence = numeric(),
+                       stringsAsFactors = FALSE)
+  for (i in IDs){
+    dat_nirs_o <- df[df$SubjectNumber == i, c("dc_time", paste0(who,"_", which_hb))]
+    dat_phys_o <- df[df$SubjectNumber == i, c("dc_time", paste0(who, "_", phys, "_Lego"))]
+    cut_to = length(dat_phys_o$dc_time) - lag
+    
+    nirs_lag = lag(dat_nirs_o[,2], lag)
+    nirs_lag_df <- cbind(dat_phys_o[1:cut_to,1], na.omit(nirs_lag))
+    print(i)
+    wtc.i <- wtc(dat_nirs_o[1:cut_to,], dat_phys_o[1:cut_to,],nrand=10, dj=1/50)
+    wave_name = paste0(i, "_", which_hb) 
+    wavelet_list[[wave_name]] <- wtc.i
+    
+    #creating functions to pull out the cone of influence (coi) 
+    func <- function(x) { rep(x, length(wtc.i$period)) } 
+    Inv.coi <- sapply(1/wtc.i$coi, func)
+    func <- function(x) { rep(x, length(wtc.i$coi)) } 
+    Period <- sapply(wtc.i$period, func)
+    Period <- t(Period)
+    
+    Incoi = Inv.coi * Period
+    Incoi[Incoi > 1] <- 0 # 0 for the COI area
+    Incoi[Incoi > 0] <- 1 # 1 for out of COI area where we analyze
+    
+    # multiplying the Rsq matrix and COI matrix
+    Rsq <- wtc.i$rsq * Incoi
+    rm(wtc.i)
+    Rsq[Rsq == 0] <- NA # make the COI area as "NA"
+      for (ts in timescales) {
+        idx <- switch(ts,
+          "4"   = 26:63,
+          "8"   = 87:106,
+          "16"  = 142:152,
+          "32"  = 194:200,
+          "64"  = 246:248,
+          "all" = 1:279
+        )
+        
+        coherence <- mean(Rsq[idx, 1:cut_to], na.rm = TRUE)
+      #coherence <- mean(Rsq[start:end, 1:293], na.rm = T)
+      #mean coherence, removing NAs for data that is within the cone of influence
+      #coherence_means <- rbind(coherence_means, data.frame(SubjectNumber = as.numeric(i), coherence=coherence))
+      #creating a dataframe of the coherence means
+                coherence_means <- rbind(
+          coherence_means,
+          data.frame(SubjectNumber = as.character(i),
+                     timescale     = ts,
+                     coherence     = coherence,
+                     stringsAsFactors = FALSE)
+        )
+      
+    }
+  }
+    col_name <- paste0(phys,"_",which_hb,"_", who, "_lag_", lag)
+    names(coherence_means)[names(coherence_means) == "coherence"] <- col_name
+    
+    # Assign to global environment if you really need it there
+    assign(col_name, coherence_means, envir = .GlobalEnv)
+  #telling the function to output the above dataframe
+  #wave_output = paste0(who,phys, "wtcs")
+
+  }
+    saveRDS(wavelet_list, file=paste0(who,"_", phys,"_lag_", lag, "_wtcs.rds"))
+    #invisible(wavelet_list)
+}
+```
+
+testing compile_wavelets_lag
+```{r}
+stress_all_lag<- stress_all%>%filter(SubjectNumber!=114&SubjectNumber!=136)
+compile_wavelets_lag(stress_all_lag,who = "mom", phys = "RSA", lag =6)
+
+list_df_mom_RSA_lag_6 =   list(RSA_HbR_dlpfc_l_mom_lag_6, RSA_HbR_dlpfc_r_mom_lag_6,RSA_HbR_tpj_l_mom_lag_6, RSA_HbR_tpj_r_mom_lag_6)
+all_mom_coherence_all_lag_6 <- list_df_mom_RSA_lag_6 %>% reduce(full_join, by=c('SubjectNumber', 'timescale'))
+
+write.csv(row.names = F, all_mom_coherence_all_lag_6, "all_mom_RSA_coherence_all_lag_6.csv")
+```
+
+for baseline
+```{r}
+compile_base_wavelets <- function(df, who = "mom", phys = "IBI"){
+  Hbs = c("HbR_tpj_l", "HbR_tpj_r","HbR_dlpfc_l", "HbR_dlpfc_r")
+  wavelet_list = list()
+  timescales = c("4", "8", "16", "32",  "all")
+  #loop through all three types of hemogoblin concentrations
+  for (which_hb in Hbs){
+  IDs <- unique(df$SubjectNumber)
+  coherence_means <- data.frame(SubjectNumber = as.character(),coherence = numeric(),
+                       stringsAsFactors = FALSE)
+  for (i in IDs){
+    dat_nirs_o <- df[df$SubjectNumber == i, c("dc_time", paste0(who,"_", which_hb))]
+    dat_phys_o <- df[df$SubjectNumber == i, c("dc_time", paste0(who, "_", phys))]
+    dat_nirs_o$nirs=scale(dat_nirs_o[,2])
+    dat_nirs_o = dat_nirs_o[, c(1,3)]
+    dat_phys_o$phys=scale(dat_phys_o[,2])
+    dat_phys_o = dat_phys_o[, c(1,3)]
+    dat_nirs_o=dat_nirs_o[order(dat_nirs_o$dc_time),]
+    dat_phys_o=dat_phys_o[order(dat_phys_o$dc_time),]
+    dat_nirs_o = dat_nirs_o[1:117,]
+    dat_phys_o = dat_phys_o[1:117,] 
+    #print(i)
+    wtc.i <- wtc(as.matrix(dat_nirs_o), as.matrix(dat_phys_o),nrand=10, dj=1/50)
+    wave_name = paste0(i, "_", which_hb) 
+    wavelet_list[[wave_name]] <- wtc.i
+    
+    #creating functions to pull out the cone of influence (coi) 
+    func <- function(x) { rep(x, length(wtc.i$period)) } 
+    Inv.coi <- sapply(1/wtc.i$coi, func)
+    func <- function(x) { rep(x, length(wtc.i$coi)) } 
+    Period <- sapply(wtc.i$period, func)
+    Period <- t(Period)
+    
+    Incoi = Inv.coi * Period
+    Incoi[Incoi > 1] <- 0 # 0 for the COI area
+    Incoi[Incoi > 0] <- 1 # 1 for out of COI area where we analyze
+    
+    # multiplying the Rsq matrix and COI matrix
+    Rsq <- wtc.i$rsq * Incoi
+    rm(wtc.i)
+    Rsq[Rsq == 0] <- NA # make the COI area as "NA"
+      for (ts in timescales) {
+        idx <- switch(ts,
+          "4"   = 26:63,
+          "8"   = 87:106,
+          "16"  = 142:152,
+          "32"  = 194:200,
+          "all" = 1:213
+        )
+        
+        coherence <- mean(Rsq[idx, 1:117], na.rm = TRUE)
+      #coherence <- mean(Rsq[start:end, 1:293], na.rm = T)
+      #mean coherence, removing NAs for data that is within the cone of influence
+      #coherence_means <- rbind(coherence_means, data.frame(SubjectNumber = as.numeric(i), coherence=coherence))
+      #creating a dataframe of the coherence means
+                coherence_means <- rbind(
+          coherence_means,
+          data.frame(SubjectNumber = as.character(i),
+                     timescale     = ts,
+                     coherence     = coherence,
+                     stringsAsFactors = FALSE)
+        )
+      
+    }
+  }
+    col_name <- paste0("base_",phys,"_",which_hb,"_", who)
+    names(coherence_means)[names(coherence_means) == "coherence"] <- col_name
+    
+    # Assign to global environment if you really need it there
+    assign(col_name, coherence_means, envir = .GlobalEnv)
+
+
+  }
+    saveRDS(wavelet_list, file=paste0("base_",who,"_", phys, "_wtcs.rds"))
+    #invisible(wavelet_list)
+}
+
+```
+
+regular
+```{r}
+compile_wavelets <- function(df, who = "mom", phys = "IBI"){
+  Hbs = c("HbR_tpj_l", "HbR_tpj_r","HbR_dlpfc_l", "HbR_dlpfc_r")
+  wavelet_list = list()
+  timescales = c("4", "8", "16", "32", "64", "all")
+  #loop through all three types of hemogoblin concentrations
+  for (which_hb in Hbs){
+  IDs <- unique(df$SubjectNumber)
+  coherence_means <- data.frame(SubjectNumber = as.character(),coherence = numeric(),
+                       stringsAsFactors = FALSE)
+  for (i in IDs){
+    dat_nirs_o <- df[df$SubjectNumber == i, c("dc_time", paste0(who,"_", which_hb))]
+    dat_phys_o <- df[df$SubjectNumber == i, c("dc_time", paste0(who, "_", phys, "_Lego"))]
+    wtc.i <- wtc(dat_nirs_o, dat_phys_o,nrand=10, dj=1/50)
+    wave_name = paste0(i, "_", which_hb) 
+    wavelet_list[[wave_name]] <- wtc.i
+    
+    #creating functions to pull out the cone of influence (coi) 
+    func <- function(x) { rep(x, length(wtc.i$period)) } 
+    Inv.coi <- sapply(1/wtc.i$coi, func)
+    func <- function(x) { rep(x, length(wtc.i$coi)) } 
+    Period <- sapply(wtc.i$period, func)
+    Period <- t(Period)
+    
+    Incoi = Inv.coi * Period
+    Incoi[Incoi > 1] <- 0 # 0 for the COI area
+    Incoi[Incoi > 0] <- 1 # 1 for out of COI area where we analyze
+    
+    # multiplying the Rsq matrix and COI matrix
+    Rsq <- wtc.i$rsq * Incoi
+    rm(wtc.i)
+    Rsq[Rsq == 0] <- NA # make the COI area as "NA"
+      for (ts in timescales) {
+        idx <- switch(ts,
+          "4"   = 26:63,
+          "8"   = 87:106,
+          "16"  = 142:152,
+          "32"  = 194:200,
+          "64"  = 246:248,
+          "all" = 1:279
+        )
+        
+        coherence <- mean(Rsq[idx, 1:293], na.rm = TRUE)
+      #coherence <- mean(Rsq[start:end, 1:293], na.rm = T)
+      #mean coherence, removing NAs for data that is within the cone of influence
+      #coherence_means <- rbind(coherence_means, data.frame(SubjectNumber = as.numeric(i), coherence=coherence))
+      #creating a dataframe of the coherence means
+                coherence_means <- rbind(
+          coherence_means,
+          data.frame(SubjectNumber = as.character(i),
+                     timescale     = ts,
+                     coherence     = coherence,
+                     stringsAsFactors = FALSE)
+        )
+      
+    }
+  }
+    col_name <- paste0(phys,"_",which_hb,"_", who)
+    names(coherence_means)[names(coherence_means) == "coherence"] <- col_name
+    
+    # Assign to global environment if you really need it there
+    assign(col_name, coherence_means, envir = .GlobalEnv)
+  #telling the function to output the above dataframe
+  #wave_output = paste0(who,phys, "wtcs")
+
+  }
+    saveRDS(wavelet_list, file=paste0(who,"_", phys, "_wtcs.rds"))
+    #invisible(wavelet_list)
+}
+
+```
+
+
+baseline rand
+```{r}
+compile_rand_base_wavelets <- function(df, who = "mom", phys = "IBI"){
+  Hbs = c("HbR_tpj_l", "HbR_tpj_r","HbR_dlpfc_l", "HbR_dlpfc_r")
+  wavelet_list = list()
+  timescales = c("4", "8", "16", "32", "all")
+  #loop through all three types of hemogoblin concentrations
+  for (which_hb in Hbs){
+  IDs <- unique(df$SubjectNumber)
+  coherence_values = list()
+  coherence_means <- data.frame(SubjectNumber = as.character(),coherence = numeric(),
+                       stringsAsFactors = FALSE)
+  n_permutations <- 10
+
+  for (i in IDs){
+    for (ts in timescales) {
+      coherence_values <- numeric(n_permutations)
+            idx <- switch(ts,
+              "4"   = 26:63,
+              "8"   = 87:106,
+              "16"  = 142:152,
+              "32"  = 194:200,
+              "all" = 1:213
+            )
+ 
+    for (k in 1:n_permutations){
+        j= sample(IDs[IDs != i],1)
+        dat_nirs_o <- df[df$SubjectNumber == i, c("dc_time", paste0(who,"_", which_hb))]
+        dat_phys_o <- df[df$SubjectNumber == j, c("dc_time", paste0(who, "_", phys))]
+  
+        #wtc.i <- wtc(dat_nirs_o, dat_phys_o,nrand=0, dj=1/50)
+        dat_nirs_o$nirs=scale(dat_nirs_o[,2])
+        dat_nirs_o = dat_nirs_o[, c(1,3)]
+        dat_phys_o$phys=scale(dat_phys_o[,2])
+        dat_phys_o = dat_phys_o[, c(1,3)]
+        dat_nirs_o=dat_nirs_o[order(dat_nirs_o$dc_time),]
+        dat_phys_o=dat_phys_o[order(dat_phys_o$dc_time),]
+        dat_nirs_o = dat_nirs_o[1:117,]
+        dat_phys_o = dat_phys_o[1:117,] 
+
+        wtc.i <- wtc(as.matrix(dat_nirs_o), as.matrix(dat_phys_o),nrand=1, dj=1/50)
+        #wave_name = paste0(i, "_", which_hb) 
+        #wavelet_list[[wave_name]] <- wtc.i
+        
+        #creating functions to pull out the cone of influence (coi) 
+        func <- function(x) { rep(x, length(wtc.i$period)) } 
+        Inv.coi <- sapply(1/wtc.i$coi, func)
+        func <- function(x) { rep(x, length(wtc.i$coi)) } 
+        Period <- sapply(wtc.i$period, func)
+        Period <- t(Period)
+        
+        Incoi = Inv.coi * Period
+        Incoi[Incoi > 1] <- 0 # 0 for the COI area
+        Incoi[Incoi > 0] <- 1 # 1 for out of COI area where we analyze
+        
+        # multiplying the Rsq matrix and COI matrix
+        Rsq <- wtc.i$rsq * Incoi
+        rm(wtc.i)
+       # Rsq[Rsq == 0] <- NA # make the COI area as "NA"
+
+        coherence_values[k] <- mean(Rsq[idx,], na.rm = TRUE)
+          }
+    #}
+          mean_coherence = mean(coherence_values, na.rm = TRUE)
+
+          #creating a dataframe of the coherence means
+            coherence_means <- rbind(
+              coherence_means,
+              data.frame(SubjectNumber = as.character(i),
+                         timescale     = ts,
+                         coherence     = mean_coherence,
+                         stringsAsFactors = FALSE)
+            )
+    }
+          
+      }
+  
+    col_name <- paste0("base_rand_",phys,"_",which_hb,"_", who)
+    names(coherence_means)[names(coherence_means) == "coherence"] <- col_name
+    
+    # Assign to global environment if you really need it there
+    assign(col_name, coherence_means, envir = .GlobalEnv)
+  #telling the function to output the above dataframe
+  #wave_output = paste0(who,phys, "wtcs")
+
+  }
+    #saveRDS(wavelet_list, file=paste0(who,"_", phys, "_wtcs.rds"))
+    #invisible(wavelet_list)
+}
+
+```
+
+rand
+```{r}
+compile_rand_wavelets <- function(df, who = "mom", phys = "IBI"){
+  Hbs = c("HbR_tpj_l", "HbR_tpj_r","HbR_dlpfc_l", "HbR_dlpfc_r")
+  wavelet_list = list()
+  timescales = c("4", "8", "16", "32", "64", "all")
+  #loop through all three types of hemogoblin concentrations
+  for (which_hb in Hbs){
+  IDs <- unique(df$SubjectNumber)[1:10]
+  coherence_means <- data.frame(SubjectNumber = as.character(),coherence = numeric(),
+                       stringsAsFactors = FALSE)
+  n_permutations <- 5
+
+  for (i in IDs){
+    for (ts in timescales) {
+            idx <- switch(ts,
+              "4"   = 26:63,
+              "8"   = 87:106,
+              "16"  = 142:152,
+              "32"  = 194:200,
+              "64"  = 246:248,
+              "all" = 1:279
+            )
+    for (k in 1:n_permutations){
+        j= sample(IDs[IDs != i],1)
+        dat_nirs_o <- df[df$SubjectNumber == i, c("dc_time", paste0(who, which_hb))]
+        dat_phys_o <- df[df$SubjectNumber == j, c("dc_time", paste0(who, phys, "_Lego"))]
+  
+        wtc.i <- wtc(dat_nirs_o, dat_phys_o,nrand=0, dj=1/50)
+        #wave_name = paste0(i, "_", which_hb) 
+        #wavelet_list[[wave_name]] <- wtc.i
+        
+        #creating functions to pull out the cone of influence (coi) 
+        func <- function(x) { rep(x, length(wtc.i$period)) } 
+        Inv.coi <- sapply(1/wtc.i$coi, func)
+        func <- function(x) { rep(x, length(wtc.i$coi)) } 
+        Period <- sapply(wtc.i$period, func)
+        Period <- t(Period)
+        
+        Incoi = Inv.coi * Period
+        Incoi[Incoi > 1] <- 0 # 0 for the COI area
+        Incoi[Incoi > 0] <- 1 # 1 for out of COI area where we analyze
+        
+        # multiplying the Rsq matrix and COI matrix
+        Rsq <- wtc.i$rsq * Incoi
+        rm(wtc.i)
+        Rsq[Rsq == 0] <- NA # make the COI area as "NA"
+
+            
+            coherence_values[k] <- mean(Rsq[idx, 1:293], na.rm = TRUE)
+    }
+          coherence = mean(coherence_values)
+
+          #creating a dataframe of the coherence means
+              coherence_means <- rbind(
+              coherence_means,
+              data.frame(SubjectNumber = as.character(i),
+                         timescale     = ts,
+                         coherence     = coherence,
+                         stringsAsFactors = FALSE)
+            )
+          
+      }
+  }
+    col_name <- paste0("rand_",phys,"_",which_hb,"_", who)
+    names(coherence_means)[names(coherence_means) == "coherence"] <- col_name
+    
+    # Assign to global environment if you really need it there
+    assign(col_name, coherence_means, envir = .GlobalEnv)
+  #telling the function to output the above dataframe
+  #wave_output = paste0(who,phys, "wtcs")
+
+  }
+    saveRDS(wavelet_list, file=paste0(who,"_", phys, "_wtcs.rds"))
+    #invisible(wavelet_list)
+}
+
+```

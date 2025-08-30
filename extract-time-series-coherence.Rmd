@@ -1,0 +1,60 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-08-30"
+---
+```{r}
+library(TSA)
+```
+
+```{r}
+child_RSA_wtcs <- readRDS("child_RSA_wtcs.rds")
+child_IBI_wtcs <- readRDS("child_IBI_wtcs.rds")
+```
+
+
+```{r}
+wavelets = names(child_IBI_wtcs)
+coh_df = data.frame()
+for (i in wavelets){
+    wtc.i <- child_IBI_wtcs[[i]]
+  
+    func <- function(x) { rep(x, length(wtc.i$period)) } 
+    Inv.coi <- sapply(1/wtc.i$coi, func)
+    func <- function(x) { rep(x, length(wtc.i$coi)) } 
+    Period <- sapply(wtc.i$period, func)
+    Period <- t(Period)
+    
+    Incoi = Inv.coi * Period
+    Incoi[Incoi > 1] <- 0 # 0 for the COI area
+    Incoi[Incoi > 0] <- 1 # 1 for out of COI area where we analyze
+    
+    # multiplying the Rsq matrix and COI matrix
+    Rsq <- wtc.i$rsq * Incoi
+    Rsq[Rsq == 0] <- NA
+
+        periods <- list(
+            "4"  = c(3, 5),    
+            "8"  = c(7, 9),   
+            "16" = c(15, 17),
+            "32" = c(31, 33)
+        )
+        
+    coh_list <- lapply(periods, function(b) {
+      idx <- which(wtc.i$period >= b[1] & wtc.i$period <= b[2])
+  apply(Rsq[idx, , drop = FALSE], 2, mean, na.rm = TRUE)
+})
+test = data.frame(
+  SubjectNumber =i,
+  dc_time = wtc.i$t,  
+  do.call(cbind, coh_list)  
+)
+coh_df <- rbind(coh_df, test)
+}
+```
+
+```{r}
+#test = dplyr::filter(coh_df, grepl("tpj_l",SubjectNumber))
+test = coh_df %>% separate(SubjectNumber, into = c("SubjectNumber", "brain_area"), sep ="_HbR_", remove = F)
+write.csv(test, "C:/Users/grace/Desktop/Desktop/Research/FIP/special issue/time-series-child-ibi-coherence.csv", row.names = F)
+```

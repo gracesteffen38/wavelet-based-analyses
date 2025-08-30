@@ -1,0 +1,143 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-08-30"
+---
+```{r}
+library(TSA)
+```
+
+```{r}
+child_RSA_wtcs <- readRDS("child_RSA_wtcs.rds")
+child_IBI_wtcs <- readRDS("child_IBI_wtcs.rds")
+```
+
+
+```{r}
+wavelets = names(child_IBI_wtcs)
+coh_df = data.frame()
+for (i in wavelets){
+    wtc.i <- child_IBI_wtcs[[i]]
+  
+    func <- function(x) { rep(x, length(wtc.i$period)) } 
+    Inv.coi <- sapply(1/wtc.i$coi, func)
+    func <- function(x) { rep(x, length(wtc.i$coi)) } 
+    Period <- sapply(wtc.i$period, func)
+    Period <- t(Period)
+    
+    Incoi = Inv.coi * Period
+    Incoi[Incoi > 1] <- 0 # 0 for the COI area
+    Incoi[Incoi > 0] <- 1 # 1 for out of COI area where we analyze
+    
+    # multiplying the Rsq matrix and COI matrix
+    Rsq <- wtc.i$rsq * Incoi
+    Rsq[Rsq == 0] <- NA
+
+        periods <- list(
+            "4"  = c(3, 5),    
+            "8"  = c(7, 9),   
+            "16" = c(15, 17),
+            "32" = c(31, 33)
+        )
+        
+    coh_list <- lapply(periods, function(b) {
+      idx <- which(wtc.i$period >= b[1] & wtc.i$period <= b[2])
+  apply(Rsq[idx, , drop = FALSE], 2, mean, na.rm = TRUE)
+})
+test = data.frame(
+  SubjectNumber =i,
+  dc_time = wtc.i$t,  
+  do.call(cbind, coh_list)  
+)
+coh_df <- rbind(coh_df, test)
+}
+```
+
+```{r}
+#test = dplyr::filter(coh_df, grepl("tpj_l",SubjectNumber))
+test = coh_df %>% separate(SubjectNumber, into = c("SubjectNumber", "brain_area"), sep ="_HbR_", remove = F)
+write.csv(test, "C:/Users/grace/Desktop/Desktop/Research/FIP/special issue/time-series-child-ibi-coherence.csv", row.names = F)
+```
+
+```{r}
+setwd("C:/Users/grace/Desktop/Desktop/Research/FIP/special issue/")
+
+child_ibi_ts  = read.csv("time-series-child-ibi-coherence.csv")
+names(child_ibi_ts)[names(child_ibi_ts) == 'time'] <- 'dc_time'
+
+child_affect = read.csv("child_affect.csv")
+
+child_ibi_aff = merge(child_ibi_ts, child_affect, by = c("SubjectNumber", "dc_time"))
+```
+
+```{r}
+testcor = child_ibi_aff %>% group_by(SubjectNumber)%>%
+  drop_na(X4, Child_PA)%>%
+  summarise(tpj_l_corr = cor.test(na.omit(X4), Child_PA)$estimate)
+```
+
+```{r}
+child_ibi_aff %>% group_by(SubjectNumber)%>%
+  drop_na(X4, Child_PA)%>%
+  summarise(tpj_l_corr = cor.test(na.omit(X4), Child_PA)$estimate)
+```
+```{r}
+setwd("C:/Users/grace/Desktop/Desktop/Research/FIP/special issue/ccfs")
+IDs = unique(child_ibi_aff$SubjectNumber)
+hbs = unique(child_ibi_aff$brain_area)
+
+for (i in IDs) {
+  for(hb in hbs){
+  dat1 <- child_ibi_aff[child_ibi_aff$SubjectNumber == i,]
+  dat = dat1%>%filter(brain_area == hb)
+  filename = paste0("ccf_child_ibi_4_", i, hb,".png")
+  png(filename)
+  ts_coh<- ts(dat$Child_PA, start = min(dat$dc_time), frequency = 1.24)
+  ts_aff <- ts(dat$X4, start = min(dat$dc_time), frequency = 1.24)
+  prewhitened <- prewhiten(ts_coh, ts_aff, main = "Child ibi-fnirs and PA")
+  dev.off()
+  }
+}
+```
+```{r}
+setwd("C:/Users/grace/Desktop/Desktop/Research/FIP/special issue/ccfs")
+
+IDs <- unique(child_ibi_aff$SubjectNumber)
+hbs <- unique(child_ibi_aff$brain_area)
+
+for (i in IDs) {
+  for (hb in hbs) {
+    # wrap everything in tryCatch
+    tryCatch({
+      dat1 <- child_ibi_aff[child_ibi_aff$SubjectNumber == i, ]
+      dat  <- dat1 %>% filter(brain_area == hb)%>%
+        drop_na(X4, Child_NA)
+      filename <- paste0("ccf_child_na_ibi_4_", i, "_", hb, ".png")
+      
+      png(filename)
+      ts_coh <- ts(dat$Child_NA, start = min(dat$dc_time), frequency = 1.24)
+      ts_aff <- ts(dat$X4,       start = min(dat$dc_time), frequency = 1.24)
+      
+      prewhitened <- prewhiten(ts_coh, ts_aff,
+                               main = paste0("Child ibi–fNIRS & NA: ", i, hb))
+      dev.off()
+      
+    }, error = function(e) {
+      # If the png device is still open, close it
+      if (dev.cur() != 1L) dev.off()
+
+      # Force-print the error
+      cat(sprintf(
+        "[%s - %s] SKIPPED due to error: %s\n",
+        i, hb, e$message
+      ))
+      flush.console()
+      # then continue automatically
+    })
+  }
+}
+
+```
+
+
+
