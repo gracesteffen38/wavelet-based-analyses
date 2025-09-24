@@ -6,7 +6,9 @@ This repository contains R code for analyzing wavelet power spectra and wavelet 
 + **Wavelet Power Analysis**
   + Computes the wavelet power spectrum for each subject.
   + Generates and saves plots of power spectra.
-  + Organizes results in a subject-level dataframe for downstream analyses.
+  + Example power spectrum:
+<img width="360" height="360" alt="example_wavelet" src="https://github.com/user-attachments/assets/faabde43-f941-412d-95ad-e132252a8311" />
+
 + **Wavelet Coherence (WTC)**
   + Calculates wavelet coherence across a range of frequencies for dyads.
   + Includes both:
