@@ -1,0 +1,42 @@
+---
+title: "plotting si wavelets"
+output: html_document
+date: "2025-06-23"
+---
+
+```{r}
+library(TSA)
+```
+
+```{r}
+setwd("C:/")
+
+child_RSA_wtcs <- readRDS("child_RSA_wtcs.rds")
+child_IBI_wtcs <- readRDS("child_IBI_wtcs.rds")
+
+```
+
+```{r}
+setwd("C:/Users/grace/Desktop/Desktop/Research/FIP/special issue/RSA_child_wavelets_no_lag")
+wavelets = names(child_RSA_wtcs)
+for (i in wavelets){
+  filename = paste0("wavelet_", i, ".png")
+  png(filename)
+  my.w <- child_RSA_wtcs[[i]]
+  plot.biwavelet(my.w, plot.phase = T)
+  dev.off()
+}
+```
+
+```{r}
+setwd("C:/Users/grace/Desktop/Desktop/Research/FIP/special issue/IBI_child_wavelets_no_lag")
+wavelets = names(child_IBI_wtcs)
+for (i in wavelets){
+  filename = paste0("wavelet_", i, ".png")
+  png(filename)
+  my.w <- child_IBI_wtcs[[i]]
+  plot.biwavelet(my.w, plot.phase = T)
+  dev.off()
+}
+```
+
